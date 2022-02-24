@@ -22,34 +22,48 @@ class OrderRow extends React.Component {
         }
     }
 
+
     componentDidMount = async () => {
         if (this.props.order.itemContract.owner === this.props.accountId) this.setState({ isOwner: true })
         const OrderContract = await new this.props.web3.eth.Contract(OrderContractJSON.abi, this.props.order._id)
         this.setState({ OrderContract: OrderContract })
-        this.updateOrder()
+        const deadline = await this.state.OrderContract.methods.getDeadline().call()
+        const orderState = await this.state.OrderContract.methods.state().call()
+        console.log(orderState)
+        if (orderState !== this.props.order.state) {
+            const body = {
+                _id: this.props.order._id,
+                deadline: deadline,
+                state: orderState
+            }
+            axios
+                .put(`${HOST}:50667/order/update`, body)
+                .then(_ => this.setState({
+                    orderState: orderState,
+                    orderDeadline: deadline,
+                    loading: 0
+                }))
+        }
     }
 
     updateOrder = async () => {
         const deadline = await this.state.OrderContract.methods.getDeadline().call()
-        this.state.OrderContract.methods.state().call()
-            .then(orderState => {
-                if (Number(orderState) !== this.props.order.state) {
-                    this.setState({ orderState: orderState })
-                    const body = {
-                        _id: this.props.order._id,
-                        deadline: deadline,
-                        state: orderState
-                    }
-                    axios
-                        .put(`${HOST}:50667/order/update`, body)
-                        .then(_ => this.setState({
-                            orderState: body.state,
-                            orderDeadline: body.deadline,
-                            loading: 0
-                        }))
-                        .catch(_ => window.location = `${HOST}:50666/error`)
-                }
-            })
+        const orderState = await this.state.OrderContract.methods.state().call()
+        console.log(orderState)
+        if (Number(orderState) !== Number(this.props.order.state)) {
+            const body = {
+                _id: this.props.order._id,
+                deadline: deadline,
+                state: orderState
+            }
+            axios
+                .put(`${HOST}:50667/order/update`, body)
+                .then(_ => this.setState({
+                    orderState: body.state,
+                    orderDeadline: body.deadline,
+                    loading: 0
+                }))
+        }
     }
 
     triggerNext = () => {
@@ -86,7 +100,7 @@ class OrderRow extends React.Component {
         var hour = "0" + a.getHours();
         var min = "0" + a.getMinutes();
         var sec = "0" + a.getSeconds();
-        var time = date.substr(-2) + '/' + month + '/' + year + ' ' + hour.substr(-2) + ':' + min.substr(-2) + ':' + sec.substr(-2);
+        var time = date.substr(-2) + '-' + month + '-' + year + ' ' + hour.substr(-2) + ':' + min.substr(-2) + ':' + sec.substr(-2);
         return time;
     }
 

@@ -2,7 +2,7 @@ import React from "react"
 import { Routes, Route } from 'react-router-dom'
 import axios from 'axios'
 import "bootstrap/dist/css/bootstrap.min.css"
-import HOST from  './env'
+import HOST from './env'
 
 import CreateItem from "./components/create/CreateItem"
 import CheckRawData from "./components/check/CheckRawData"
@@ -38,13 +38,15 @@ class App extends React.Component {
       axios
         .post(`${HOST}:50667/account`, { _id: (await provider.request({ method: 'eth_requestAccounts' }))[0].toLowerCase() })
         .then(res => this.setState({ account: res.data }))
-        .catch(console.log())
+
+      axios
+        .post(`${HOST}:50667/item/delivery`, { id: '0x15B7473221b3eF2423D3733885fFD046d9441299', now: 'A09'})
+        .then(response => console.log (response.data))
 
       provider.on('accountsChanged', accounts => {
         axios
           .post(`${HOST}:50667/account`, { _id: accounts[0].toLowerCase() })
           .then(res => this.setState({ account: res.data }))
-          .catch(console.log())
       })
 
       const ItemManagerContract = await new web3.eth.Contract(
@@ -88,10 +90,10 @@ class App extends React.Component {
             <Route
               path="/profile"
               element={
-                <Profile
+                (this.state.account._id !== '0x0000000000000000000000000000000000000000') ? <Profile
                   account={this.state.account}
                   web3={this.state.web3}
-                />
+                /> : null
               }
             />
             <Route
