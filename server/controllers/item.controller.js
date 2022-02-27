@@ -5,25 +5,28 @@ const ItemManagerContractJSON = require('../contracts/ItemManager.json')
 const OrderContractJSON = require('../contracts/Order.json')
 const ItemContractJSON = require('../contracts/Item.json')
 const Web3 = require('web3')
-var web3 = new Web3(new Web3.providers.WebsocketProvider('wss://goerli.infura.io/ws/v3/688437a972c14517ac4575d8dbd00124'))
+var web3 = new Web3(new Web3.providers.WebsocketProvider(process.env.INFURA_WS_ENDPOINT))
+console.log(`Listening Infura Websocket provider: ${process.env.INFURA_WS_ENDPOINT}`)
 var ItemManagerContract
 
 // listenning Item manager contract event
 (async () => {
     ItemManagerContract = await new web3.eth.Contract(
         ItemManagerContractJSON.abi,
-        '0xFAb77aD73c64f0365eE87Bcc063f562Bda0A3Da7'
+        process.env.ITEM_MANAGER_ADDRESS
     )
+    console.log(`Item manager Smart contract address: ${process.env.ITEM_MANAGER_ADDRESS}`)
 
-    // listen Item create
     ItemManagerContract.events.ItemStateChanged().on('data', async event => {
         const lastItemIndex = await ItemManagerContract.methods.currentItemIndex().call()
-        console.log(event.returnValues.itemIndex + " and " + (lastItemIndex-2))
-        if (event.returnValues.state == 0 && event.returnValues.itemIndex == (lastItemIndex-1)) {
+
+        //  Item created
+        if (event.returnValues.state == 0 && event.returnValues.itemIndex == (lastItemIndex - 1)) {
             ItemManagerContract.methods.items(event.returnValues.itemIndex).call()
                 .then(sItemStruct => new web3.eth.Contract(ItemContractJSON.abi, sItemStruct._item))
                 .then(ItemContractInstance => ItemContractInstance.methods.rawDataHash().call()
                     .then(rawDataHash => {
+                        //  add item to database include raw data hash
                         Item.findOne({ rawDataHash: rawDataHash }).then(itemhiden => {
                             const newItem = new Item({
                                 _id: ItemContractInstance._address,
@@ -35,12 +38,17 @@ var ItemManagerContract
                                 externalLink: itemhiden.externalLink,
                                 rawDataHash: rawDataHash,
                                 picture: itemhiden.picture,
-                                hiden: false
+                                state: 1
                             })
                             newItem.save()
                         }).then(() => {
+                            // delete old item data
                             Item.findOneAndDelete({ rawDataHash: rawDataHash })
-                                .exec(error => error ? console.log(error) : console.log(rawDataHash))
+                                .exec(error => {
+                                    if (error) {
+                                        console.log(error)
+                                    }
+                                })
                         })
                     })
                 ).catch(error => console.log(error))
@@ -49,15 +57,16 @@ var ItemManagerContract
         // listen Item sold event
         if (event.returnValues.state == 1) {
             ItemManagerContract.methods.items(event.returnValues.itemIndex).call().then(sItemStruct => {
+                // change item state and hide item
                 Item.findByIdAndUpdate(sItemStruct._item, {
-                    state: sItemStruct._state,
                     order: sItemStruct._order,
-                    hiden: true
+                    state: 2
                 }).exec(error => {
                     if (error) {
                         console.log(error)
                     } else {
                         (async () => {
+                            // save order object in the database
                             const OrderContract = await new web3.eth.Contract(OrderContractJSON.abi, sItemStruct._order)
                             const newOrder = new Order({
                                 _id: OrderContract._address,
@@ -78,10 +87,10 @@ var ItemManagerContract
         if (event.returnValues.state == 2) {
             ItemManagerContract.methods.items(event.returnValues.itemIndex).call().then(sItemStruct => {
                 (async () => {
+                    // change ownership and show item
                     const OrderContract = await new web3.eth.Contract(OrderContractJSON.abi, sItemStruct._order)
                     Item.findByIdAndUpdate(await OrderContract.methods.itemContract().call(), {
                         owner: (await OrderContract.methods.purchaser().call()).toLowerCase(),
-                        hiden: false
                     }).exec(error => {
                         if (error) console.log(error)
                     })
@@ -126,45 +135,56 @@ const getRawItem = (req, res) => {
 }
 
 const getItems = (req, res) => {
-    Item.find().sort('-createdAt').where({ hiden: false }).select('name picture price owner').limit(12).then(items => res.status(200).json(items))
+    Item
+        .find({ state: 1 })
+        .sort('-createdAt')
+        .select('name picture price owner')
+        .limit(12)
+        .then(items => res.status(200).json(items))
 }
 
 const getMyItems = (req, res) => {
-    Item.find().sort('-createdAt').where({ owner: req.query._id }).select('name picture price owner').limit(12).then(items => res.status(200).json(items))
+    Item
+        .find({ owner: req.query._id })
+        .where({ $or: [{ state: 1 }, { state: 2 }] })
+        .sort('-createdAt')
+        .select('name picture price owner')
+        .limit(12)
+        .then(items => res.status(200).json(items))
 }
 
-const getMyOrders = (req, res) => {
-    Order.find({
-        $or: [
-            { purchaser: req.query._id },
-            { seller: req.query._id }
-        ]
-    })
+const getMyPaids = (req, res) => {
+    Order
+        .find({ purchaser: req.query._id })
         .sort('-createdAt').limit(12)
-        .populate('itemContract')
-        .then(items => {
-            res.status(200).json(items)
-        })
+        .populate('itemContract', '_id name picture price owner')
+        .then(items => res.status(200).json(items))
 }
 
 const getMySolds = (req, res) => {
-    Order.find({ seller: req.query._id })
+    Order
+        .find({ seller: req.query._id })
         .sort('-createdAt').limit(12)
-        .populate('itemContract')
-        .then(items => {
-            res.status(200).json(items)
-        })
+        .populate('itemContract', '_id name picture price owner')
+        .then(items => res.status(200).json(items))
 }
 
 
 const getItem = (req, res) => {
-    Item.findById(req.query._id).then(item => res.status(200).json(item)).catch(error => res.status(404).json(error))
+    Item
+        .findById(req.query._id)
+        .then(item => res.status(200).json(item))
+        .catch(error => res.status(404).json(error))
 }
 
 const searchItem = (req, res) => {
-    Item.find(({ name: { $regex: req.body.name, $options: 'i' } })).sort('-createdAt').limit(10).then(items => {
-        res.status(200).json(items)
-    })
+    Item
+        .find(({ name: { $regex: req.body.name, $options: 'i' } }))
+        .sort('-createdAt')
+        .limit(12)
+        .then(items => {
+            res.status(200).json(items)
+        })
 }
 
 const createItem = (req, res) => {
@@ -205,24 +225,36 @@ const createItem = (req, res) => {
     })
 }
 
-const updateOrder = (req, res) => {
+const updateOrder = async (req, res) => {
+    const OrderContract = await new web3.eth.Contract(OrderContractJSON.abi, req.body._id)
+    const orderState = await OrderContract.methods.state().call()
+    const orderDealine = await OrderContract.methods.getDeadline().call()
     Order
         .findByIdAndUpdate(req.body._id, {
-            state: req.body.state,
-            deadline: req.body.deadline
+            state: orderState,
+            deadline: orderDealine
         })
-        .exec(err =>
-            err ? res.status(500).json(err) : Order.findById(req.body._id).then(order => res.status(201).json(order))
-        )
+        .exec(err => err ? res.status(500).json(err) : res.status(201).json({ state: orderState, deadline: orderDealine }))
+}
+
+const changePrice = async (req, res) => {
+    const ItemContract = await new web3.eth.Contract(
+        ItemContractJSON.abi,
+        req.body._id
+    )
+    const ItemPrice = await ItemContract.methods.price().call()
+    Item
+        .findByIdAndUpdate(req.body._id, { price: ItemPrice })
+        .exec(err => err ? res.status(500).json(err) : res.status(201).json(ItemPrice))
 }
 
 const delivery = (req, res) => {
     Order
         .findByIdAndUpdate(req.body.id, {
-            now: req.body.now,
+            nowIn: req.body.nowIn,
         })
         .exec(err =>
-            err ? res.status(500).json(err) : Order.findById(req.body.id).select('now from to').then(order => res.status(201).json(order))
+            err ? res.status(500).json(err) : Order.findById(req.body.id).select('nowIn from to').then(order => res.status(201).json(order))
         )
 }
 
@@ -232,10 +264,11 @@ module.exports = {
     getItem,
     getItems,
     getMyItems,
-    getMyOrders,
+    getMyPaids,
     getMySolds,
     createItem,
     updateOrder,
     searchItem,
+    changePrice,
     delivery
 }
