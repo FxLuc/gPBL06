@@ -11,20 +11,18 @@ import OrderContractJSON from '../../contracts/Order.json'
 
 class OrderRow extends React.Component {
     constructor(props) {
-        super(props);
+        super(props)
         this.state = {
             loading: 0,
-            OrderContract: null,
-            isOwner: false
+            isSeller: false,
+            orderState: this.props.order.state,
+            orderDeadline: this.props.order.deadline
         }
     }
 
 
     componentDidMount = async () => {
-        console.log(this.props.order)
-        if (this.props.order.itemContract.owner === this.props.accountId) this.setState({ isOwner: true })
-        const OrderContract = await new this.props.web3.eth.Contract(OrderContractJSON.abi, this.props.order._id)
-        this.setState({ OrderContract: OrderContract })
+        if (this.props.order.seller === this.props.accountId) this.setState({ isSeller: true })
     }
 
     updateOrder = async () => {
@@ -34,55 +32,61 @@ class OrderRow extends React.Component {
         axios
             .put(`${process.env.REACT_APP_HTTP_SERVER_ENDPOINT}/order/update`, body)
             .then(res => this.setState({
-                orderState: res.data.state,
-                orderDeadline: res.data.deadline,
+                orderState: Number(res.data.state),
+                orderDeadline: Number(res.data.deadline),
                 loading: 0
             }))
     }
 
-    triggerNext = () => {
-        if (this.state.orderState === '0') {
+    triggerNext = async () => {
+        const OrderContract = await new this.props.web3.eth.Contract(OrderContractJSON.abi, this.props.order._id)
+        if (this.state.orderState === 0) {
             this.setState({ loading: 1 })
-            this.state.OrderContract.methods.triggerConfirm().send({ from: this.props.accountId })
+            OrderContract.methods.triggerConfirm().send({ from: this.props.accountId })
                 .then(_ => this.updateOrder())
                 .catch(_ => this.setState({ loading: 2 }))
         }
-        else if (this.state.orderState === '1') {
+        else if (this.state.orderState === 1) {
             this.setState({ loading: 1 })
-            this.state.OrderContract.methods.triggerShipping().send({ from: this.props.accountId })
+            OrderContract.methods.triggerShipping().send({ from: this.props.accountId })
                 .then(_ => this.updateOrder())
                 .catch(_ => this.setState({ loading: 2 }))
         }
-        else if (this.state.orderState === '2') {
+        else if (this.state.orderState === 2) {
             this.setState({ loading: 1 })
-            this.state.OrderContract.methods.triggerReceived().send({ from: this.props.accountId })
+            OrderContract.methods.triggerReceived().send({ from: this.props.accountId })
                 .then(_ => this.updateOrder())
                 .catch(_ => this.setState({ loading: 2 }))
         }
     }
 
-    triggerCancel = () => {
-        this.state.OrderContract.methods.triggerCancel().send({ from: this.props.accountId })
+    triggerCancel = async () => {
+        this.setState({ loading: 1 })
+        const OrderContract = await new this.props.web3.eth.Contract(OrderContractJSON.abi, this.props.order._id)
+        OrderContract.methods.triggerCancel().send({ from: this.props.accountId })
+            .then(_ => this.updateOrder())
+            .catch(_ => this.setState({ loading: 2 }))
     }
 
     convertTimestamp(unix_timestamp) {
-        var a = new Date(unix_timestamp * 1000);
-        var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        var year = a.getFullYear();
-        var month = months[a.getMonth()];
-        var date = "0" + a.getDate();
-        var hour = "0" + a.getHours();
-        var min = "0" + a.getMinutes();
-        var sec = "0" + a.getSeconds();
-        var time = date.substr(-2) + '-' + month + '-' + year + ' ' + hour.substr(-2) + ':' + min.substr(-2) + ':' + sec.substr(-2);
-        return time;
+        if (unix_timestamp === 0) return "No deadline"
+        var a = new Date(unix_timestamp * 1000)
+        var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        var year = a.getFullYear()
+        var month = months[a.getMonth()]
+        var date = "0" + a.getDate()
+        var hour = "0" + a.getHours()
+        var min = "0" + a.getMinutes()
+        var sec = "0" + a.getSeconds()
+        var time = date.substr(-2) + '-' + month + '-' + year + ' ' + hour.substr(-2) + ':' + min.substr(-2) + ':' + sec.substr(-2)
+        return time
     }
 
     covertStep(step) {
-        if (step === '0') return 'Placed'
-        else if (step === '1') return 'Comfirmed'
-        else if (step === '2') return 'Shipping'
-        else if (step === '3') return 'Delivered'
+        if (step === 0) return 'Placed'
+        else if (step === 1) return 'Comfirmed'
+        else if (step === 2) return 'Shipping'
+        else if (step === 3) return 'Delivered'
         else return 'Canceled'
     }
 
@@ -91,8 +95,7 @@ class OrderRow extends React.Component {
     }
 
     addressQR(address) {
-        if (address === '0x0000000000000000000000000000000000000000') return 'Not yet'
-        else return (
+        return (
             <>
                 <QRCode
                     value={address}
@@ -114,32 +117,59 @@ class OrderRow extends React.Component {
     render() {
         return (
             <tr>
-                <td>
-                    <p style={{ height: '105px', overflowY: 'scroll', marginBottom: '0px' }} >{this.props.order.itemContract.name}
-                    </p>
-                </td>
-                <td><p className='text-nowrap'>
-                    <FontAwesomeIcon icon={faEthereum} className='text-primary' /> { } {(Number(this.props.order.price) / 1000000000000000000).toFixed(2)} { }
-                </p></td>
-                <td className='text-center'>
-                    {this.addressQR(this.props.order.itemContract._id)}
-                </td>
                 <td className='text-center'>
                     {this.addressQR(this.props.order._id)}
                 </td>
-                <td className='text-center'>
-                    {this.addressQR(this.props.order.seller)}
+                <td className='col-4'>
+                    <p style={{ height: '105px', overflowY: 'scroll', marginBottom: '0px' }} >
+                        {this.props.order.itemContract.name}
+                    </p>
+                </td>
+                <td className='text-start'>
+                    <p style={{ height: '105px', overflowY: 'scroll', marginBottom: '0px' }} >
+                        Item: { }
+                        <ToastAutoHide
+                            message='Copy'
+                            feedback='Copied!'
+                            title={this.addressOverflow(this.props.order.itemContract._id)}
+                            content={this.props.order.itemContract._id}
+                        /><br />
+                        Seller: { }
+                        <ToastAutoHide
+                            message='Copy'
+                            feedback='Copied!'
+                            title={this.addressOverflow(this.props.order.seller)}
+                            content={this.props.order.seller}
+                        /><br />
+                        Purchaser: { }
+                        <ToastAutoHide
+                            message='Copy'
+                            feedback='Copied!'
+                            title={this.addressOverflow(this.props.order.purchaser)}
+                            content={this.props.order.purchaser}
+                        />
+                    </p>
                 </td>
                 <td className='text-center'>
-                    {this.addressQR(this.props.order.purchaser)}
+                    <p>
+                        {this.convertTimestamp(this.state.orderDeadline)}<br />
+                        {this.covertStep(this.state.orderState)}<br />
+                        <span className='text-nowrap'>
+                            <FontAwesomeIcon icon={faEthereum} className='text-primary' /> { } {(Number(this.props.order.price) / 1000000000000000000).toFixed(5)} { }
+                        </span>
+                    </p>
                 </td>
-                <td className='text-center'>{this.covertStep(this.state.orderState)}</td>
-                <td className='text-center'>{this.convertTimestamp(this.props.order.deadline)}</td>
-                <OrderNextStep state={this.state.orderState} triggerNext={this.triggerNext} triggerCancel={this.triggerCancel} isOwner={this.state.isOwner} loading={this.state.loading} />
-            </tr>
+                <OrderNextStep
+                    state={this.state.orderState}
+                    triggerNext={this.triggerNext}
+                    triggerCancel={this.triggerCancel}
+                    isSeller={this.state.isSeller}
+                    loading={this.state.loading}
+                />
+            </tr >
         )
     }
 
 }
 
-export default OrderRow;
+export default OrderRow
